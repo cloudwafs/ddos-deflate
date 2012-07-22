@@ -9,7 +9,7 @@
 #   - Add reverse DNS lookup for banned/warned IP addresses
 #   - Added logging to file
 #   - Add --no-kill option for easy testing
-#   - Mage ddos.sh executable
+#   - Add --list option for info
 ##############################################################################
 # This program is distributed under the "Artistic License" Agreement         #
 #                                                                            #
@@ -45,6 +45,7 @@ showhelp()
 	echo "-c | --cron: Create cron job to run this script regularly ($FREQ minutes)"
 	echo '-k | --kill: Block the offending ip making more than N connections (overrides config)'
 	echo '-n | --no-kill: Report only, do not block IPs (overrides config)'
+	echo '-l | --list: List all IPs and connection counts over the warning limit.'
 }
 
 unbanip()
@@ -91,8 +92,9 @@ add_to_cron()
 	service crond restart
 }
 
-
+TMP_PREFIX='/tmp/ddos'
 load_conf
+LIST=0
 while [ $1 ]; do
 	case $1 in
 		'-h' | '--help' | '?' )
@@ -109,6 +111,9 @@ while [ $1 ]; do
 		'--no-kill' | '-n' )
 			KILL=0
 			;;
+		'--list' | '-l' )
+			LIST=1
+			;;
 		 *[0-9]* )
 			BAN_LIMIT=$1
 			;;
@@ -120,23 +125,28 @@ while [ $1 ]; do
 	shift
 done
 [ -z $WARN_LIMIT ] && WARN_LIMIT=$BAN_LIMIT
+[ $LIST -eq 1 -a $BAN_LIMIT -lt $WARN_LIMIT ] && WARN_LIMIT=$BAN_LIMIT
 [ $BAN_LIMIT -ge $WARN_LIMIT ] || WARN_LIMIT=$BAN_LIMIT
 
-TMP_PREFIX='/tmp/ddos'
-TMP_FILE="mktemp $TMP_PREFIX.XXXXXXXX"
-BANNED_IP_MAIL=`$TMP_FILE`
-BANNED_IP_LIST=`$TMP_FILE`
-echo "Banned the following ip addresses on `date`" > $BANNED_IP_MAIL
-echo >>	$BANNED_IP_MAIL
-BAD_IP_LIST=`$TMP_FILE`
 # Modified netstat command taken from: http://blog.everymanhosting.com/webhosting/dos-deflate-blocks-numbers-not-ip-addresses/
 # Only check for ESTABLISHED status connections
+BAD_IP_LIST=$(mktemp $TMP_PREFIX.XXXXXXXX)
 netstat -ntu | grep ESTAB | grep ':' | awk '{print $5}' | sed 's/::ffff://' | cut -f1 -d ':' \
   | sort | grep -v -f <(grep -vF '#' $IGNORE_IP_LIST | sort) | uniq -c \
   | awk "{ if (\$1 > $WARN_LIMIT) print; }" | sort -nr \
   > $BAD_IP_LIST
 cat $BAD_IP_LIST
+if [ $LIST -eq 1 ]; then
+  FOUND_COUNT=$(cat $BAD_IP_LIST | wc -l)
+  echo "Found ${FOUND_COUNT} IPs with ${WARN_LIMIT} or more connections."
+  rm -f $TMP_PREFIX.*
+  exit
+fi
 
+BANNED_IP_MAIL=$(mktemp $TMP_PREFIX.XXXXXXXX)
+BANNED_IP_LIST=$(mktemp $TMP_PREFIX.XXXXXXXX)
+echo "Banned the following ip addresses on `date`" > $BANNED_IP_MAIL
+echo >>	$BANNED_IP_MAIL
 IP_BANNED=0
 IP_LOGGED=0
 while read CONN IP; do

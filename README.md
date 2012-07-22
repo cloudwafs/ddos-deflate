@@ -4,11 +4,12 @@ This simple shell script will block IPs at the firewall that are found to have t
 under the presumption that they are part of a (D)DoS attack. The script supports auto-unblocking,
 email notifications, logging, a simple cron installer and reverse DNS.
 
-# Instructions
+## Instructions
 
 1. Download the (D)DoS Deflate installer:
 
         sudo git clone https://github.com/colinmollenhour/ddos-deflate.git /usr/local/ddos
+        sudo chmod +x /usr/local/ddos/ddos.sh
 
 2. Add your IP address to the whitelist:
 
@@ -22,7 +23,7 @@ email notifications, logging, a simple cron installer and reverse DNS.
 
         /usr/local/ddos/ddos.sh --cron
 
-# Changes
+## Changes
 
 * 7/21/2012 - Colin Mollenhour (colin@mollenhour.com)
 ** Installation procedure changed to git-centric
