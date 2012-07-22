@@ -151,7 +151,7 @@ IP_BANNED=0
 IP_LOGGED=0
 while read CONN IP; do
   FQDN=$(dig +short -x $IP)
-  if [ $CONN -gte $BAN_LIMIT -a $KILL -eq 1 ]; then
+  if [ $CONN -ge $BAN_LIMIT -a $KILL -eq 1 ]; then
     echo "BANNED: $IP with $CONN connections ($FQDN)" >> $BANNED_IP_MAIL
     echo $IP >> $BANNED_IP_LIST
     echo $IP >> $IGNORE_IP_LIST
