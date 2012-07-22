@@ -6,9 +6,9 @@ email notifications, logging, a simple cron installer and reverse DNS.
 
 ## Instructions
 
-1. Download the (D)DoS Deflate installer:
+1. Clone this repo into /usr/local/ddos:
 
-        sudo git clone https://github.com/colinmollenhour/ddos-deflate.git /usr/local/ddos
+        sudo git clone git://github.com/colinmollenhour/ddos-deflate.git /usr/local/ddos
 
 2. Add your IP address to the whitelist:
 
@@ -18,7 +18,7 @@ email notifications, logging, a simple cron installer and reverse DNS.
 
         vim /usr/local/ddos/ddos.conf
 
-4. Add the cron job
+4. Add the cron job (optional)
 
         /usr/local/ddos/ddos.sh --cron
 
