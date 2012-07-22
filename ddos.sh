@@ -1,6 +1,15 @@
-#!/bin/sh
+#!/bin/bash
 ##############################################################################
 # DDoS-Deflate version 0.6 Author: Zaf <zaf@vsnl.com>                        #
+#                                                                            #
+# 7/21/2012 - Colin Mollenhour (colin@mollenhour.com)                        #
+#   - Use Bash explicitly
+#   - Added WARN_LIMIT feature
+#   - Don't print IP's under the limit
+#   - Add reverse DNS lookup for banned/warned IP addresses
+#   - Added logging to file
+#   - Add --no-kill option for easy testing
+#   - Mage ddos.sh executable
 ##############################################################################
 # This program is distributed under the "Artistic License" Agreement         #
 #                                                                            #
@@ -14,7 +23,7 @@ load_conf()
 		source $CONF
 	else
 		head
-		echo "\$CONF not found."
+		echo "$CONF not found."
 		exit 1
 	fi
 }
@@ -30,11 +39,12 @@ showhelp()
 {
 	head
 	echo 'Usage: ddos.sh [OPTIONS] [N]'
-	echo 'N : number of tcp/udp	connections (default 150)'
+	echo "N : Ban limit for number of tcp/udp	connections per IP (default $BAN_LIMIT)"
 	echo 'OPTIONS:'
 	echo '-h | --help: Show	this help screen'
-	echo '-c | --cron: Create cron job to run this script regularly (default 1 mins)'
-	echo '-k | --kill: Block the offending ip making more than N connections'
+	echo "-c | --cron: Create cron job to run this script regularly ($FREQ minutes)"
+	echo '-k | --kill: Block the offending ip making more than N connections (overrides config)'
+	echo '-n | --no-kill: Report only, do not block IPs (overrides config)'
 }
 
 unbanip()
@@ -71,12 +81,12 @@ add_to_cron()
 	sleep 1
 	echo "SHELL=/bin/sh" > $CRON
 	if [ $FREQ -le 2 ]; then
-		echo "0-59/$FREQ * * * * root /usr/local/ddos/ddos.sh >/dev/null 2>&1" >> $CRON
+		echo "0-59/$FREQ * * * * root $PROG >/dev/null 2>&1" >> $CRON
 	else
 		let "START_MINUTE = $RANDOM % ($FREQ - 1)"
 		let "START_MINUTE = $START_MINUTE + 1"
 		let "END_MINUTE = 60 - $FREQ + $START_MINUTE"
-		echo "$START_MINUTE-$END_MINUTE/$FREQ * * * * root /usr/local/ddos/ddos.sh >/dev/null 2>&1" >> $CRON
+		echo "$START_MINUTE-$END_MINUTE/$FREQ * * * * root $PROG >/dev/null 2>&1" >> $CRON
 	fi
 	service crond restart
 }
@@ -96,8 +106,11 @@ while [ $1 ]; do
 		'--kill' | '-k' )
 			KILL=1
 			;;
+		'--no-kill' | '-n' )
+			KILL=0
+			;;
 		 *[0-9]* )
-			NO_OF_CONNECTIONS=$1
+			BAN_LIMIT=$1
 			;;
 		* )
 			showhelp
@@ -106,6 +119,8 @@ while [ $1 ]; do
 	esac
 	shift
 done
+[ -z $WARN_LIMIT ] && WARN_LIMIT=$BAN_LIMIT
+[ $BAN_LIMIT -ge $WARN_LIMIT ] || WARN_LIMIT=$BAN_LIMIT
 
 TMP_PREFIX='/tmp/ddos'
 TMP_FILE="mktemp $TMP_PREFIX.XXXXXXXX"
@@ -116,37 +131,42 @@ echo >>	$BANNED_IP_MAIL
 BAD_IP_LIST=`$TMP_FILE`
 # Modified netstat command taken from: http://blog.everymanhosting.com/webhosting/dos-deflate-blocks-numbers-not-ip-addresses/
 # Only check for ESTABLISHED status connections
-netstat -ntu | grep ESTAB | grep ':' | awk '{print $5}' | sed 's/::ffff://' | cut -f1 -d ':' | sort | uniq -c | sort -nr > $BAD_IP_LIST
+netstat -ntu | grep ESTAB | grep ':' | awk '{print $5}' | sed 's/::ffff://' | cut -f1 -d ':' \
+  | sort | grep -v -f <(grep -vF '#' $IGNORE_IP_LIST | sort) | uniq -c \
+  | awk "{ if (\$1 > $WARN_LIMIT) print; }" | sort -nr \
+  > $BAD_IP_LIST
 cat $BAD_IP_LIST
-if [ $KILL -eq 1 ]; then
-	IP_BAN_NOW=0
-	while read line; do
-		CURR_LINE_CONN=$(echo $line | cut -d" " -f1)
-		CURR_LINE_IP=$(echo $line | cut -d" " -f2)
-		if [ $CURR_LINE_CONN -lt $NO_OF_CONNECTIONS ]; then
-			break
-		fi
-		IGNORE_BAN=`grep -c $CURR_LINE_IP $IGNORE_IP_LIST`
-		if [ $IGNORE_BAN -ge 1 ]; then
-			continue
-		fi
-		IP_BAN_NOW=1
-		echo "$CURR_LINE_IP with $CURR_LINE_CONN connections" >> $BANNED_IP_MAIL
-		echo $CURR_LINE_IP >> $BANNED_IP_LIST
-		echo $CURR_LINE_IP >> $IGNORE_IP_LIST
-		if [ $APF_BAN -eq 1 ]; then
-			$APF -d $CURR_LINE_IP
-		else
-			$IPT -I INPUT -s $CURR_LINE_IP -j DROP
-		fi
-	done < $BAD_IP_LIST
-	if [ $IP_BAN_NOW -eq 1 ]; then
-		dt=`date`
-		eval $AFTER_BAN
-		if [ $EMAIL_TO != "" ]; then
-			cat $BANNED_IP_MAIL | mail -s "IP addresses banned on $dt" $EMAIL_TO
-		fi
-		unbanip
-	fi
+
+IP_BANNED=0
+IP_LOGGED=0
+while read CONN IP; do
+  FQDN=$(dig +short -x $IP)
+  if [ $CONN -gte $BAN_LIMIT -a $KILL -eq 1 ]; then
+    echo "BANNED: $IP with $CONN connections ($FQDN)" >> $BANNED_IP_MAIL
+    echo $IP >> $BANNED_IP_LIST
+    echo $IP >> $IGNORE_IP_LIST
+    if [ $APF_BAN -eq 1 ]; then
+      $APF -d $CURR_LINE_IP
+    else
+      $IPT -I INPUT -s $CURR_LINE_IP -j DROP
+    fi
+    IP_BANNED=1
+  else
+    echo "WARNING: $IP with $CONN connections ($FQDN)" >> $BANNED_IP_MAIL
+  fi
+  IP_LOGGED=1
+done < $BAD_IP_LIST
+
+if [ $IP_BANNED -eq 1 ]; then
+  [ -n $AFTER_BAN ] && eval $AFTER_BAN
+  unbanip
+fi
+if [ $IP_LOGGED -eq 1 ]; then
+  if [ $LOG_FILE != "" ]; then
+    cat $BANNED_IP_MAIL >> $LOG_FILE
+  fi
+  if [ $EMAIL_TO != "" ]; then
+    cat $BANNED_IP_MAIL | mail -s "IP addresses banned on `date`" $EMAIL_TO
+  fi
 fi
 rm -f $TMP_PREFIX.*

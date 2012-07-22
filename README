@@ -1,19 +1,19 @@
+# 7/21/2012 - Colin Mollenhour (colin@mollenhour.com)
+#   - Installation procedure changed to git-centric
+#   - Removed install.sh and uninstall.sh
+
 1. Download the (D)DoS Deflate installer:
 
-wget https://github.com/jfernandez/ddos-deflate/raw/master/install.sh
+sudo git clone https://github.com/colinmollenhour/ddos-deflate.git /usr/local/ddos
 
-2. Give execute permission to the script:
-
-chmod 0700 install.sh
-
-3. Install it:
-
-./install.sh
-
-4. Add your IP address to the whitelist:
+2. Add your IP address to the whitelist:
 
 vim /usr/local/ddos/ignore.ip.list
 
-5. Configure (D)DoS Deflate:
+3. Configure (D)DoS Deflate:
 
 vim /usr/local/ddos/ddos.conf
+
+4. Add the cron job
+
+/usr/local/ddos/ddos.sh --cron
