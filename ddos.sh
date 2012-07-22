@@ -133,7 +133,7 @@ done
 BAD_IP_LIST=$(mktemp $TMP_PREFIX.XXXXXXXX)
 netstat -ntu | grep ESTAB | grep ':' | awk '{print $5}' | sed 's/::ffff://' | cut -f1 -d ':' \
   | sort | grep -v -f <(grep -vF '#' $IGNORE_IP_LIST | sort) | uniq -c \
-  | awk "{ if (\$1 > $WARN_LIMIT) print; }" | sort -nr \
+  | awk "{ if (\$1 >= $WARN_LIMIT) print; }" | sort -nr \
   > $BAD_IP_LIST
 cat $BAD_IP_LIST
 if [ $LIST -eq 1 ]; then
