@@ -10,11 +10,12 @@
 #   - Added logging to file
 #   - Add --no-kill option for easy testing
 #   - Add --list option for info
+#   - Add --ban option for instant manual ban
 ##############################################################################
 # This program is distributed under the "Artistic License" Agreement         #
 #                                                                            #
 # The LICENSE file is located in the same directory as this program. Please  #
-#  read the LICENSE file before you make copies or distribute this program   #
+#  read the LICENSE file before you make copies or distribute this program.  #
 ##############################################################################
 load_conf()
 {
@@ -38,14 +39,15 @@ head()
 showhelp()
 {
 	head
-	echo 'Usage: ddos.sh [OPTIONS] [N]'
+	echo 'Usage: ddos.sh [OPTIONS] [N|IP]'
 	echo "N : Ban limit for number of tcp/udp	connections per IP (default $BAN_LIMIT)"
 	echo 'OPTIONS:'
-	echo '-h | --help: Show	this help screen'
-	echo "-c | --cron: Create cron job to run this script regularly ($FREQ minutes)"
-	echo '-k | --kill: Block the offending ip making more than N connections (overrides config)'
+	echo '-h | --help:    Show this help screen'
+	echo "-c | --cron:    Create cron job to run this script regularly ($FREQ minutes)"
+	echo '-k | --kill:    Block the offending ip making more than N connections (overrides config)'
 	echo '-n | --no-kill: Report only, do not block IPs (overrides config)'
-	echo '-l | --list: List all IPs and connection counts over the warning limit.'
+	echo '-l | --list:    List all IPs and connection counts over the warning limit.'
+	echo '-b | --ban:     Ban the given IP address temporarily.'
 }
 
 unbanip()
@@ -92,6 +94,45 @@ add_to_cron()
 	service crond restart
 }
 
+ban_ips()
+{
+	BANNED_IP_MAIL=$(mktemp $TMP_PREFIX.XXXXXXXX)
+	BANNED_IP_LIST=$(mktemp $TMP_PREFIX.XXXXXXXX)
+	echo "Banned the following ip addresses on `date`" > $BANNED_IP_MAIL
+	IP_BANNED=0
+	IP_LOGGED=0
+	while read CONN IP; do
+		FQDN=$(dig +short -x $IP)
+		if [ $CONN -ge $BAN_LIMIT -a $KILL -eq 1 ]; then
+			echo "BANNED: $IP with $CONN connections ($FQDN)" >> $BANNED_IP_MAIL
+			echo $IP >> $BANNED_IP_LIST
+			echo $IP >> $IGNORE_IP_LIST
+			if [ $APF_BAN -eq 1 ]; then
+				$APF -d $IP && IP_BANNED=1
+			else
+				$IPT -I INPUT -s $IP -j DROP && IP_BANNED=1
+			fi
+		else
+			echo "WARNING: $IP with $CONN connections ($FQDN)" >> $BANNED_IP_MAIL
+		fi
+		IP_LOGGED=1
+	done < $BAD_IP_LIST
+
+	if [ $IP_BANNED -eq 1 ]; then
+		[ -n $AFTER_BAN ] && eval $AFTER_BAN
+		unbanip
+	fi
+	if [ $IP_LOGGED -eq 1 ]; then
+		echo >>	$BANNED_IP_MAIL
+		if [ -n $LOG_FILE ]; then
+			cat $BANNED_IP_MAIL >> $LOG_FILE
+		fi
+		if [ "$EMAIL_TO" != "" ]; then
+			mail -s "IP addresses banned on `date`" $EMAIL_TO < $BANNED_IP_MAIL
+		fi
+	fi
+}
+
 TMP_PREFIX='/tmp/ddos'
 load_conf
 LIST=0
@@ -103,6 +144,15 @@ while [ $1 ]; do
 			;;
 		'--cron' | '-c' )
 			add_to_cron
+			exit
+			;;
+		'--ban' | '-b' )
+			[ "$2" != "" ] || { echo "You did not provide the IP to ban.."; exit 1; }
+			BAD_IP_LIST=$(mktemp $TMP_PREFIX.XXXXXXXX)
+			echo "999999 $2" > $BAD_IP_LIST
+			KILL=1
+			ban_ips
+			rm -f $TMP_PREFIX.*
 			exit
 			;;
 		'--kill' | '-k' )
@@ -137,46 +187,10 @@ netstat -ntu | grep ESTAB | grep ':' | awk '{print $5}' | sed 's/::ffff://' | cu
   > $BAD_IP_LIST
 cat $BAD_IP_LIST
 if [ $LIST -eq 1 ]; then
-  FOUND_COUNT=$(cat $BAD_IP_LIST | wc -l)
-  echo "Found ${FOUND_COUNT} IPs with ${WARN_LIMIT} or more connections."
-  rm -f $TMP_PREFIX.*
-  exit
+	FOUND_COUNT=$(cat $BAD_IP_LIST | wc -l)
+	echo "Found ${FOUND_COUNT} IPs with ${WARN_LIMIT} or more connections."
+	rm -f $TMP_PREFIX.*
+	exit
 fi
-
-BANNED_IP_MAIL=$(mktemp $TMP_PREFIX.XXXXXXXX)
-BANNED_IP_LIST=$(mktemp $TMP_PREFIX.XXXXXXXX)
-echo "Banned the following ip addresses on `date`" > $BANNED_IP_MAIL
-echo >>	$BANNED_IP_MAIL
-IP_BANNED=0
-IP_LOGGED=0
-while read CONN IP; do
-  FQDN=$(dig +short -x $IP)
-  if [ $CONN -ge $BAN_LIMIT -a $KILL -eq 1 ]; then
-    echo "BANNED: $IP with $CONN connections ($FQDN)" >> $BANNED_IP_MAIL
-    echo $IP >> $BANNED_IP_LIST
-    echo $IP >> $IGNORE_IP_LIST
-    if [ $APF_BAN -eq 1 ]; then
-      $APF -d $CURR_LINE_IP
-    else
-      $IPT -I INPUT -s $CURR_LINE_IP -j DROP
-    fi
-    IP_BANNED=1
-  else
-    echo "WARNING: $IP with $CONN connections ($FQDN)" >> $BANNED_IP_MAIL
-  fi
-  IP_LOGGED=1
-done < $BAD_IP_LIST
-
-if [ $IP_BANNED -eq 1 ]; then
-  [ -n $AFTER_BAN ] && eval $AFTER_BAN
-  unbanip
-fi
-if [ $IP_LOGGED -eq 1 ]; then
-  if [ $LOG_FILE != "" ]; then
-    cat $BANNED_IP_MAIL >> $LOG_FILE
-  fi
-  if [ $EMAIL_TO != "" ]; then
-    cat $BANNED_IP_MAIL | mail -s "IP addresses banned on `date`" $EMAIL_TO
-  fi
-fi
+ban_ips
 rm -f $TMP_PREFIX.*
